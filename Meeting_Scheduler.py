@@ -1,101 +1,78 @@
 import streamlit as st
-from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
+import json
 
-# Google Calendar API scope
+# Define the API scope
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-def authenticate_google():
-    """Authenticate with Google Calendar API."""
-    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-    creds = flow.run_local_server(port=0)
+# Load Google credentials from secrets
+def load_credentials():
+    creds_data = json.loads(st.secrets["google"]["credentials"])
+    flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
+    creds = flow.run_console()  # Manual authentication
     return build('calendar', 'v3', credentials=creds)
 
-def get_calendar_events(service):
-    """Retrieve upcoming events from the user's Google Calendar."""
+# Retrieve upcoming events
+def get_upcoming_events(service):
     now = datetime.utcnow().isoformat() + 'Z'
     events_result = service.events().list(
-        calendarId='primary', timeMin=now, maxResults=10, singleEvents=True,
+        calendarId='primary', timeMin=now, maxResults=5, singleEvents=True,
         orderBy='startTime').execute()
     events = events_result.get('items', [])
     return events
 
-def suggest_time(events):
-    """Suggest available time slots based on the user's existing events."""
-    now = datetime.utcnow()
-    suggested_slots = []
-
-    # Suggest next available slots (within the same day, avoiding overlaps)
-    for i in range(1, 5):  # Check for the next 4 hours
-        slot = now + timedelta(hours=i)
-        if all(slot.isoformat() not in event['start'].get('dateTime', '') for event in events):
-            suggested_slots.append(slot.strftime("%Y-%m-%d %H:%M"))
-
-    return suggested_slots if suggested_slots else ["No free slots available today."]
-
-def create_event(service, start_time, end_time, title, attendees):
-    """Create a calendar event."""
+# Create a new calendar event
+def create_event(service, event_details):
     event = {
-        'summary': title,
-        'start': {'dateTime': start_time, 'timeZone': 'UTC'},
-        'end': {'dateTime': end_time, 'timeZone': 'UTC'},
-        'attendees': [{'email': email} for email in attendees],
+        'summary': event_details['summary'],
+        'start': {'dateTime': event_details['start_time'], 'timeZone': 'UTC'},
+        'end': {'dateTime': event_details['end_time'], 'timeZone': 'UTC'},
     }
-    return service.events().insert(calendarId='primary', body=event).execute()
+    service.events().insert(calendarId='primary', body=event).execute()
 
-# Streamlit chatbot interface
-st.title("🤖 Conversational Meeting Scheduler Bot 📅")
-st.write("Hey there! 👋 I'm here to help you schedule your meetings easily.")
+# Streamlit interface for the chatbot
+st.title("📅 Meeting Scheduler Bot")
+st.write("Hello! I can help you manage your appointments with Google Calendar.")
 
-# Step 1: Authenticate Google Calendar
 if "service" not in st.session_state:
-    st.write("🔐 Let's connect your Google Calendar to get started.")
-    if st.button("Connect Calendar"):
+    if st.button("Connect to Google Calendar"):
         try:
-            st.session_state.service = authenticate_google()
-            st.success("Connected successfully! 🎉")
+            service = load_credentials()
+            st.session_state.service = service
+            st.success("Connected to Google Calendar!")
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Authentication failed: {e}")
 
 if "service" in st.session_state:
     service = st.session_state.service
 
-    # Step 2: Smart Time Suggestion
-    st.write("📅 Let me suggest a few free time slots based on your calendar...")
-    events = get_calendar_events(service)
-    suggested_times = suggest_time(events)
+    st.subheader("View Upcoming Events")
+    events = get_upcoming_events(service)
+    if not events:
+        st.write("No upcoming events.")
+    else:
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            st.write(f"📅 {start}: {event['summary']}")
 
-    if suggested_times:
-        st.write("Here are some available slots:")
-        st.write(", ".join(suggested_times))
-
-    # Step 3: Get Meeting Details from User
-    st.write("Now, let's create your meeting! 🎯")
-
-    title = st.text_input("What’s the title of the meeting?", placeholder="Enter meeting title...")
-    attendees = st.text_area(
-        "Who should attend? (Enter emails, separated by commas)",
-        placeholder="e.g., alice@example.com, bob@example.com"
-    )
-
-    selected_date = st.date_input("Pick the date of the meeting:")
-    selected_time = st.selectbox("Select a time slot:", suggested_times)
-
-    duration = st.slider("How long will the meeting be (in hours)?", 1, 4, 1)
+    st.subheader("Schedule a New Meeting")
+    summary = st.text_input("Meeting Title")
+    start_date = st.date_input("Start Date")
+    start_time = st.time_input("Start Time")
+    end_date = st.date_input("End Date")
+    end_time = st.time_input("End Time")
 
     if st.button("Schedule Meeting"):
-        try:
-            # Convert input into datetime objects
-            start_datetime = datetime.strptime(f"{selected_date} {selected_time}", "%Y-%m-%d %H:%M")
-            end_datetime = start_datetime + timedelta(hours=duration)
+        start_dt = datetime.combine(start_date, start_time).isoformat()
+        end_dt = datetime.combine(end_date, end_time).isoformat()
+        event_details = {'summary': summary, 'start_time': start_dt, 'end_time': end_dt}
+        create_event(service, event_details)
+        st.success("Meeting scheduled successfully!")
 
-            attendees_list = [email.strip() for email in attendees.split(",")]
-
-            # Create the calendar event
-            event = create_event(service, start_datetime.isoformat(), end_datetime.isoformat(), title, attendees_list)
-
-            st.success(f"Meeting scheduled successfully! 🎉 [View on Google Calendar](https://calendar.google.com/calendar/r/event?eid={event['id']})")
-        except Exception as e:
-            st.error(f"Oops! Something went wrong: {e}")
+    st.subheader("Need Help?")
+    st.write("Ask me anything about your appointments.")
+    user_query = st.text_input("Your Question", "")
+    if user_query:
+        st.write("🤖 I'm still learning, but I can help you find more about managing Google Calendar!")
