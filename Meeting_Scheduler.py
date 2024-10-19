@@ -9,10 +9,31 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 # Load Google credentials from secrets
 def load_credentials():
+    """Loads Google Calendar credentials from Streamlit secrets and handles authentication."""
+
+    # Load credentials from Streamlit secrets
     creds_data = json.loads(st.secrets["google"]["credentials"])
+
+    # Create a flow object using the credentials data and SCOPES
     flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
-    creds = flow.run_console()  # Manual authentication
+
+    # Perform authentication using a local server (opens browser for user login)
+    creds = flow.run_local_server(port=0)
+
+    # Return the Calendar API service built with authenticated credentials
     return build('calendar', 'v3', credentials=creds)
+
+# Test the function (optional)
+if __name__ == "__main__":
+    service = load_credentials()
+    print("Google Calendar API is connected successfully!")
+
+
+# def load_credentials():
+    # creds_data = json.loads(st.secrets["google"]["credentials"])
+    # flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
+    # creds = flow.run_console()  # Manual authentication
+    # return build('calendar', 'v3', credentials=creds)
 
 # Retrieve upcoming events
 def get_upcoming_events(service):
